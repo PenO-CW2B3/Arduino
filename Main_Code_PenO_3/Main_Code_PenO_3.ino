@@ -2,11 +2,6 @@
 //Serial communication Arduino Raspberry Pi ==> https://www.instructables.com/id/Raspberry-Pi-Arduino-Serial-Communication/ 
 
 
-//Global variable integers
-int procedure = 1;                                              //1 = authentication procedure, 2 = keypad pincode procedure, 3 = new user procedure
-int facial_recognition = 0;                                     //0 = no correct face detected, 1 = correct face detected
-int state = 0;                                                  //0=no motion, 1=motion, 2=motion & correct fingerprint, 3=failed attempt, 4=correct pincode after failed attempt
-
 //Fingerprint scanner
 #include <Adafruit_Fingerprint.h>                               //Library for the fingerprint scanner
 #include <SoftwareSerial.h>                                     //Library for Software Serial
@@ -20,20 +15,8 @@ Adafruit_APDS9960 apds;                                         //Create the APD
 
 //Keypad
 #include <Keypad.h>                                             //Library for the keypad
-int i = 0;                                                      //Keycounter for keypad
-const byte ROWS = 4; //four rows
-const byte COLS = 3; //three columns
-char keys[ROWS][COLS] = {
- {'1','2','3'},
- {'4','5','6'},
- {'7','8','9'},
- {'*','0','#'}
-};
-byte rowPins[ROWS] = {13, 12, 11, 10};                          //Connect to the row pinouts of the keypad
-byte colPins[COLS] = {9, 8, 7};                                 //Connect to the column pinouts of the keypad
-Keypad kpd = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS );
-char inputArray[4];                                             //Password length
-char Password[4] = {'1','4','3','6'};                           //Password
+int correct_pincode = 0;                                        //if this integer is 1, a correct pincode was given
+char Password[4] = {'1','1','1','1'};                           //Standard password
 
 
 
@@ -47,7 +30,7 @@ void setup() {
 //SETUP CODE FOR THE PROXIMITY SENSOR
 
   if(!apds.begin()){
-    Serial.println("failed to initialize the proximity sensor! Please check your wiring.");
+    Serial.println("error");
   }
   //else Serial.println("Proximity sensor initialized!");
 
@@ -63,7 +46,7 @@ void setup() {
   if (finger.verifyPassword()) {
     //Serial.println("Found fingerprint sensor!");
   } else {
-    Serial.println("Did not find fingerprint sensor :(");
+    Serial.println("error");
     while (1) { delay(1); }
   }
 
@@ -81,117 +64,159 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  //PROCEDURE: 1 = authentication procedure, 2 = keypad pincode procedure, 3 = new user procedure
+  
+  String procedure = "authenticate";               //Standard order is to authenticate            
 
-  if (Serial.available() > 0) {       //if data is being received
+  procedure = raspberry_read();                    //Read orders coming from the Raspberry Pi
  
-    procedure = readnumber();
-  } 
-
-  if (procedure > 4) {               //If random number is being sent, ignore it
-    procedure = 1;
-  }
- 
-  if (procedure == 1) {               //Authenticate
+  if (procedure == "authenticate") {               //Authenticate
     authenticate();
   }
-
-  if (procedure == 2) {               //Keypad pincode procedure
-    Serial.println("STARTING KEYPAD PINCODE PROCEDURE");
     
-    while (state != 4) {              //Only when the correct pincode is given, de keypad will stop reading codes and authentication will continue
-     keypad_pincode();
-    }
-    procedure = 1;
-    
-  }
 
-  if (procedure == 3) {               //New user procedure
-    Serial.println("STARTING NEW USER PROCEDURE");
+  if (procedure == "new_user") {               //New user procedure
     new_user();
-    procedure = 1;                    //Put back in authenticate mode 
-  }
-
-  if (procedure == 4) {               //Facial recognition ok
-    Serial.println("Facial recognition ok");
-    facial_recognition = 1;
-    delay(2000);
-    procedure = 1;                    //Put back in authenticate mode 
+    procedure = "authenticate";                //Put back in authenticate mode 
   }
 }
-
-
 
 
 
 
 void authenticate() {                       //Main function that will authenticate users with the various sensors
+
+
+  int state = 0;                            //State = 1 ==> Raspberry scans for faces / State = 2 ==> Raspberry sends a pincode and keypad procedure is started
   
-  if ((proximity()) == true) {              //Checking for motion around the door knob
-    
-     state = 1;
-     Serial.println("STEP 1: Proximity detected, scanning for fingers now (state = 1)"); Serial.println("");
-    
+  if ((proximity()) == true) {              //Nothing happens as long no motion/proximity is detected
+
+    Serial.println("(Proximity detected)");
+
+     //Once motion is detected, give the user 6 attempts to scan their finger
      int attempts = 0;
-     while (attempts < 4) {
+     while (attempts < 7) {
         int starttime = millis();
         int endtime = starttime;
         while (((endtime - starttime) <=2000)) {
-          getFingerprintIDez();                  //Start scanning for fingerprints
+          getFingerprintIDez();                       //Start scanning for fingerprints
           delay(50);
           endtime = millis();
         }
-        if (finger.confidence > 50) {     //Limiting factor: if confidence isn't high enough, acces is denied
+        
+        if (finger.confidence > 50) {                 //Limiting factor: if confidence isn't high enough, acces is denied
+          Serial.println("(Correct fingerprint)");
           attempts = 0;
-          state = 2;
+          state = 1;
           break;
         }
-        if (attempts == 3) {            
-          state = 3;
-          Serial.println("ERROR: Failed attempt (state = 3)"); Serial.println("");
+        
+        if (attempts == 6) {                          //6 failed attempts
+          Serial.println("(6 failed attempts ==> keypad procedure)");
+          state = 2;
         }
-        ++attempts;                       //increments 'attemps' by one
-        Serial.println(attempts);
+        
+        ++attempts;                                   //increments 'attemps' by one
+        Serial.print("(");Serial.print(6-attempts);Serial.println("attempts left)");
      }
     
-     if (state == 2) {         
-      Serial.print("STEP 2: Found ID #"); Serial.print(finger.fingerID); 
-      Serial.print(" with confidence of "); Serial.print(finger.confidence); Serial.println(" (state = 2)"); Serial.println("");
-      finger.confidence = 0;
+     if (state == 1) {         
       
-      if (facial_recognition == 1) {
-        Serial.println("Opening lock");
-        // open lock
-        facial_recognition = 0;
+      Serial.print("id");Serial.println(finger.fingerID);     //Triggers the Raspberry Pi to start scanning for the face of the correct user
+      finger.confidence = 0;                                  //Put finger.confidence back to 0, else the code will think there is always a correct fingerprint
+
+      String facial_recognition = ".";
+      while (! (facial_recognition == "correct_face" ||  facial_recognition == "failed_face")) {
+        Serial.println(".");
+        facial_recognition = raspberry_read();
+        delay(500);
       }
-     
+      
+      if (facial_recognition == "correct_face") {
+    
+        // open lock
+        Serial.println("(Correct face ==> opening lock)");
+        Serial.println("sleep");
+        
+      } 
+
+      if (facial_recognition == "failed_face") {
+        state = 2;
+      }
      } 
+
+     if (state == 2) {
+
+      Serial.println("pincode");                      //Triggers the Raspberry Pi to send a randomly generated pincode that is also sent to the user
+
+      String pincode = "authenticate";
+      while (pincode == "authenticate") {             //Standard message returned by raspberry_read() is "authenticate", so keep reading untill a pincode is received
+        pincode = raspberry_read();
+      }
+
+      pincode.toCharArray(Password, 5);      //Reads the pincode received from the Arduino and changes the Password to it
+
+      Serial.print("(Generated pincode = ");Serial.print(Password);Serial.println(")");
+      
+      //Keypad procedure
+      int starttime = millis();
+      int endtime = starttime;
+      while (((endtime - starttime) < 120000)) {   //user has 2 minutes to put in a valid pincode
+        keypad_pincode();
+      }
+
+      if (correct_pincode == 1) {
+        Serial.println("(Correct pincode ==> opening lock)");
+        Serial.println("sleep");
+        correct_pincode = 0;                          //Reset the pincode controller to 0
+      }
+     }
   }
 }
-
-
 
 
 
 
 
 void keypad_pincode() {
-  
- char key = kpd.getKey();
- 
-  if(key) {                 //if a key is pressed
-  inputArray[i] = key;      //store entry into array
-  i++;
-  Serial.print(key);        //print keypad character entry to serial port
 
-  if (key=='*')
+ const byte ROWS = 4; //four rows
+  const byte COLS = 3; //three columns
+  char keys[ROWS][COLS] = {
+  {'1','2','3'},
+  {'4','5','6'},
+  {'7','8','9'},
+  {'*','0','#'}
+  };
+  byte rowPins[ROWS] = {13, 12, 11, 10};                          //Connect to the row pinouts of the keypad
+  byte colPins[COLS] = {9, 8, 7};                                 //Connect to the column pinouts of the keypad
+  Keypad kpd = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS );
+  char inputArray[4];                                             //Password length
+  int i = 0;                                                      //Keycounter for keypad
+  char key; 
+
+  while (i < 4) {
+
+  key = kpd.getKey();
+  
+  //if a key is pressed
+   if(key) {
+      inputArray[i] = key; //store entry into array
+      i++;
+      Serial.print(key); //print keypad character entry to serial port
+      }
+
+    if (key=='*')
     {
       Serial.println("");
       Serial.println("Reset");
       i=0; //reset i
     }
 
-  if (i == 4)               //if 4 presses have been made
+   }
+    
+
+
+  if (i == 4) //if 4 presses have been made
     {
       {
 
@@ -202,19 +227,11 @@ void keypad_pincode() {
     inputArray[3] == Password[3])
        {
         //Action if code is correct:
-        state = 4;
-        Serial.println("");
-        Serial.println("Correct password");     
-       } else {
-          Serial.println(""); 
-          Serial.println("Wrong password");
+        correct_pincode = 1;            
        }
       }
-      {
-      i=0; //reset i
-      }
+      
     }
-  }
 }
 
 
@@ -224,16 +241,19 @@ void keypad_pincode() {
 
 void new_user() {                         //Function that will run when a new user wants to be put in the database
 
-  Serial.println("Ready to enroll a fingerprint!");
-  Serial.println("Please type in the ID # (from 1 to 127) you want to save this finger as...");
+  Serial.println("(Ready to enroll a fingerprint!)");
+  Serial.println("(Please type in the ID # (from 1 to 127) you want to save this finger as...)");
+  Serial.println("user_id");            //Triggers the Raspberry Pi to enter a user_id
   id = readnumber();
   if (id == 0) {// ID #0 not allowed, try again!
      return;
   }
-  Serial.print("Enrolling ID #");
-  Serial.println(id);
+  Serial.print("(Enrolling ID #");
+  Serial.print(id);Serial.println(")");
   
   getFingerprintEnroll();
+
+  Serial.println("finger_succes");
   
 }
 
@@ -248,6 +268,19 @@ bool proximity() {                        //Action is taken if proximity goes ov
   } else {
     return false;
   }
+}
+
+
+//CODE TO READ SERIAL INPUT FROM RASPBERRY PI
+
+String raspberry_read() {
+
+  String message = "authenticate";          //Standard message is "authenticate"
+  
+  if (Serial.available() > 0) {             //if data is being received
+    message = Serial.readString();          //Read the string being sent from the Raspberry Pip
+  } 
+  return message;
 }
 
 
@@ -476,7 +509,8 @@ uint8_t getFingerprintEnroll() {
     return p;
   } else if (p == FINGERPRINT_ENROLLMISMATCH) {
     Serial.println("Fingerprints did not match");
-    return p;
+    getFingerprintEnroll();
+    //return p;
   } else {
     Serial.println("Unknown error");
     return p;
