@@ -286,7 +286,7 @@ void button() {
 void open_door() {                  //This function will open the lock solenoid when called
 
   digitalWrite(solenoid, HIGH);     //Switch Solenoid ON
-  delay(7000);                      //Give the user 10 seconds to open the door
+  delay(7000);                      //Give the user 7 seconds to open the door
   digitalWrite(solenoid, LOW);      //Switch Solenoid OFF
 }
 
