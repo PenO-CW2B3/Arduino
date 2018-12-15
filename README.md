@@ -1,3 +1,5 @@
-# Arduino sensors & lock control
+# Arduino Code
 
-To be able to run the code, include all the libraries in the "libraries" folder.
+The folder "Libraries" contains the needed libraries to run the code.
+
+Annex 6 refers to the MAIN_CODE folder where you can find the full Arduino code for this project
